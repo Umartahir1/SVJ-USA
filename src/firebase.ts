@@ -2,12 +2,13 @@ import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
 import { getFirestore, doc, setDoc, getDoc } from 'firebase/firestore';
 // Import the Firebase configuration if it exists
-// Use import.meta.glob for optional, eager loading of the config file
 const configs = import.meta.glob('../firebase-applet-config.json', { eager: true, import: 'default' });
 const fileConfig = configs['../firebase-applet-config.json'] as any;
 
-const firebaseConfig = fileConfig || {
-  // Fallback to environment variables if the file is missing
+// Only use fileConfig if it actually contains an apiKey
+const useFileConfig = fileConfig && fileConfig.apiKey;
+
+const firebaseConfig = useFileConfig ? fileConfig : {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
@@ -19,17 +20,30 @@ const firebaseConfig = fileConfig || {
 
 // Initialize Firebase SDK
 let app: any;
+const missingKeys = [];
+if (!firebaseConfig.apiKey) missingKeys.push('VITE_FIREBASE_API_KEY');
+if (!firebaseConfig.projectId) missingKeys.push('VITE_FIREBASE_PROJECT_ID');
+if (!firebaseConfig.authDomain) missingKeys.push('VITE_FIREBASE_AUTH_DOMAIN');
+if (!firebaseConfig.appId) missingKeys.push('VITE_FIREBASE_APP_ID');
+
 try {
-  if (!firebaseConfig || !firebaseConfig.apiKey) {
-    console.warn("Firebase configuration is incomplete. Please check your environment variables.");
-    // Initialize with dummy config to prevent top-level crashes
-    app = initializeApp({ apiKey: "dummy" });
+  if (missingKeys.length > 0) {
+    console.warn(`Firebase configuration is incomplete. Missing: ${missingKeys.join(', ')}`);
+    console.log("Current Config Keys found:", Object.keys(firebaseConfig).filter(k => !!(firebaseConfig as any)[k]));
+    
+    app = initializeApp({ 
+      apiKey: firebaseConfig.apiKey || "missing", 
+      projectId: firebaseConfig.projectId || "missing",
+      authDomain: firebaseConfig.authDomain || "missing",
+      appId: firebaseConfig.appId || "missing"
+    });
   } else {
+    console.log("Firebase initialized successfully with " + (useFileConfig ? "file config" : "environment variables"));
     app = initializeApp(firebaseConfig);
   }
 } catch (e) {
   console.error("Error initializing Firebase:", e);
-  app = initializeApp({ apiKey: "dummy" });
+  app = initializeApp({ apiKey: "error", projectId: "error" });
 }
 
 export const auth = getAuth(app);
