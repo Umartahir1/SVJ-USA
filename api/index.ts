@@ -3,9 +3,10 @@ import axios from "axios";
 import admin from "firebase-admin";
 import path from "path";
 import fs from "fs";
+import { GoogleGenAI, Type } from "@google/genai";
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Increase limit for image uploads
 
 const HUBSPOT_ACCESS_TOKEN_ENV = process.env.HUBSPOT_ACCESS_TOKEN;
 let cachedDbToken: string | null = null;
@@ -32,6 +33,7 @@ try {
   if (fs.existsSync(configPath)) {
     const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
     if (!admin.apps.length) {
+      console.log("[Firebase Admin] Initializing with file config for project:", firebaseConfig.projectId);
       admin.initializeApp({
         projectId: firebaseConfig.projectId,
       });
@@ -39,8 +41,10 @@ try {
   } else {
     // Fallback if file not found (e.g. on Vercel if not uploaded)
     if (!admin.apps.length) {
+      const projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || "gen-lang-client-0125145098";
+      console.log("[Firebase Admin] Initializing with env project ID:", projectId);
       admin.initializeApp({
-        projectId: process.env.FIREBASE_PROJECT_ID || "gen-lang-client-0125145098",
+        projectId: projectId,
       });
     }
   }
@@ -212,6 +216,99 @@ app.post("/api/submit-order", authenticateUser, async (req: any, res: any) => {
     res.json({ success: true, dealId });
   } catch (error: any) {
     res.status(error.response?.status || 500).json({ error: error.response?.data?.message || error.message });
+  }
+});
+
+// AI Processing Endpoint
+app.post("/api/process-ai", authenticateUser, async (req: any, res: any) => {
+  try {
+    const { text, image } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY1 || process.env.GEMENI_API_KEY1;
+    
+    if (!apiKey) {
+      console.error("[AI] Gemini API key not found in environment variables");
+      return res.status(500).json({ error: "Gemini API key not configured on server. Please add GEMINI_API_KEY to Vercel." });
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+    const model = "gemini-3-flash-preview";
+
+    // Fetch products for SKU matching
+    const token = await getHubSpotToken();
+    let availableSkus = "";
+    if (token) {
+      try {
+        const productsRes = await axios.get('https://api.hubapi.com/crm/v3/objects/products', {
+          params: { properties: 'hs_sku,name', limit: 100 },
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        availableSkus = productsRes.data.results.map((p: any) => p.properties.hs_sku).filter(Boolean).join(", ");
+      } catch (e) {
+        console.warn("[AI] Could not fetch products for SKU matching:", e);
+      }
+    }
+
+    const systemInstruction = `You are an order processing assistant for SVJ Brands. 
+    Your task is to extract order information from text (SMS, email) or images.
+    
+    Available SKUs in our system: ${availableSkus}
+    
+    Extract:
+    1. Company Name (if present)
+    2. Line Items: A list of products with their SKU and Quantity.
+    
+    Return ONLY a JSON object in this format:
+    {
+      "companyName": "string or null",
+      "lineItems": [
+        { "sku": "string", "quantity": number }
+      ]
+    }
+    
+    If you see a product name but no SKU, try to match it to the available SKUs provided.
+    If you cannot find a piece of information, leave it as null or an empty array.`;
+
+    let contents: any = [];
+    if (text) contents.push({ text });
+    if (image && image.data) {
+      contents.push({
+        inlineData: {
+          mimeType: image.mimeType,
+          data: image.data
+        }
+      });
+    }
+
+    const result = await ai.models.generateContent({
+      model,
+      contents: { parts: contents },
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            companyName: { type: Type.STRING },
+            lineItems: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  sku: { type: Type.STRING },
+                  quantity: { type: Type.NUMBER }
+                },
+                required: ["sku", "quantity"]
+              }
+            }
+          }
+        }
+      }
+    });
+
+    res.json(JSON.parse(result.text || "{}"));
+  } catch (error: any) {
+    console.error('[AI] Processing Error:', error);
+    res.status(500).json({ error: error.message });
   }
 });
 

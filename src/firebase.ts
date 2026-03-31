@@ -24,9 +24,14 @@ const missingKeys = [];
 if (!firebaseConfig.apiKey) missingKeys.push('VITE_FIREBASE_API_KEY');
 if (!firebaseConfig.projectId) missingKeys.push('VITE_FIREBASE_PROJECT_ID');
 
+// Debug: Log all VITE_ environment variables (keys only)
+const viteKeys = Object.keys(import.meta.env).filter(k => k.startsWith('VITE_'));
+console.log("[DEBUG] Available VITE_ keys:", viteKeys);
+
 try {
   if (missingKeys.length > 0) {
     console.warn(`Firebase configuration is incomplete. Missing: ${missingKeys.join(', ')}`);
+    console.log("[DEBUG] Current firebaseConfig:", { ...firebaseConfig, apiKey: firebaseConfig.apiKey ? "PRESENT" : "MISSING" });
     app = initializeApp({ apiKey: "missing", projectId: "missing" });
   } else {
     // Log the first 5 chars of the API key to verify it's being picked up correctly (safe for debugging)

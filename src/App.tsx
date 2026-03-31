@@ -185,80 +185,31 @@ export default function App() {
     setError(null);
 
     try {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        throw new Error("Gemini API key is missing. Please check your environment variables.");
-      }
-      const ai = new GoogleGenAI({ apiKey });
-      const model = "gemini-3-flash-preview";
-
-      const availableSkus = products.map(p => p.properties.hs_sku?.value).filter(Boolean).join(", ");
+      const idToken = await user?.getIdToken();
       
-      const systemInstruction = `You are an order processing assistant for SVJ Brands. 
-      Your task is to extract order information from text (SMS, email) or images.
-      
-      Available SKUs in our system: ${availableSkus}
-      
-      Extract:
-      1. Company Name (if present)
-      2. Line Items: A list of products with their SKU and Quantity.
-      
-      Return ONLY a JSON object in this format:
-      {
-        "companyName": "string or null",
-        "lineItems": [
-          { "sku": "string", "quantity": number }
-        ]
-      }
-      
-      If you see a product name but no SKU, try to match it to the available SKUs provided.
-      If you cannot find a piece of information, leave it as null or an empty array.`;
-
-      let contents: any = [];
-      
-      if (aiInput) {
-        contents.push({ text: aiInput });
-      }
-      
-      if (aiFile) {
-        const base64Data = aiPreview?.split(",")[1];
-        if (base64Data) {
-          contents.push({
-            inlineData: {
-              mimeType: aiFile.type,
-              data: base64Data
-            }
-          });
-        }
+      let imageData = null;
+      if (aiFile && aiPreview) {
+        imageData = {
+          mimeType: aiFile.type,
+          data: aiPreview.split(",")[1]
+        };
       }
 
-      const response = await ai.models.generateContent({
-        model,
-        contents: { parts: contents },
-        config: {
-          systemInstruction,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              companyName: { type: Type.STRING },
-              lineItems: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    sku: { type: Type.STRING },
-                    quantity: { type: Type.NUMBER }
-                  },
-                  required: ["sku", "quantity"]
-                }
-              }
-            }
-          }
-        }
+      const response = await fetch("/api/process-ai", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${idToken}`
+        },
+        body: JSON.stringify({
+          text: aiInput,
+          image: imageData
+        })
       });
 
-      const result = JSON.parse(response.text || "{}");
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "AI processing failed");
+      
       console.log("AI Result:", result);
 
       if (result.companyName) {

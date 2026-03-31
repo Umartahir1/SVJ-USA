@@ -1,5 +1,6 @@
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import express from "express";
 import app from "./api/index.js"; // Use .js extension for ESM compatibility with tsx
 
 async function startServer() {
