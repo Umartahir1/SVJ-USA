@@ -12,20 +12,22 @@ const HUBSPOT_ACCESS_TOKEN_ENV = process.env.HUBSPOT_ACCESS_TOKEN;
 let cachedDbToken: string | null = null;
 
 async function getHubSpotToken() {
-  const envToken = process.env.HUBSPOT_ACCESS_TOKEN || "pat-na2-b13a57a5-f736-47f1-a77a-e9bf6e579a70";
+  const envToken = process.env.HUBSPOT_ACCESS_TOKEN;
   if (envToken) {
     return envToken;
   }
   if (cachedDbToken) return cachedDbToken;
 
   try {
-    const doc = await admin.firestore().collection("config").doc("hubspot").get();
-    if (doc.exists) {
-      cachedDbToken = doc.data()?.token;
-      return cachedDbToken;
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+      const doc = await admin.firestore().collection("config").doc("hubspot").get();
+      if (doc.exists) {
+        cachedDbToken = doc.data()?.token;
+        return cachedDbToken;
+      }
     }
   } catch (err) {
-    console.error("[Firebase] Error fetching HubSpot token from Firestore:", err);
+    console.warn("[Firebase] Could not fetch HubSpot token from Firestore (likely missing Service Account Key):", err.message);
   }
   return null;
 }
@@ -33,9 +35,26 @@ async function getHubSpotToken() {
 // Initialize Firebase Admin
 try {
   if (!admin.apps.length) {
+    let projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID;
+    let databaseId = process.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID;
+
+    // Try to load from config file if env vars are missing
+    try {
+      const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+      if (fs.existsSync(configPath)) {
+        const fileConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+        projectId = projectId || fileConfig.projectId;
+        databaseId = databaseId || fileConfig.firestoreDatabaseId;
+      }
+    } catch (configErr) {
+      console.warn("[Firebase Admin] Could not read config file:", configErr);
+    }
+
+    // Hardcoded fallbacks as last resort
+    projectId = projectId || "gen-lang-client-0125145098";
+    databaseId = databaseId || "ai-studio-f4d77b55-6f5e-42f7-a496-84f9e8a52ad4";
+
     const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-    const projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || "gen-lang-client-0125145098";
-    const databaseId = process.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || "ai-studio-f4d77b55-6f5e-42f7-a496-84f9e8a52ad4";
 
     if (serviceAccountKey) {
       console.log("[Firebase Admin] Initializing with Service Account Key");
@@ -51,7 +70,7 @@ try {
       });
     }
     
-    if (databaseId) {
+    if (databaseId && process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
       console.log("[Firebase Admin] Using Firestore Database ID:", databaseId);
       admin.firestore().settings({ databaseId: databaseId });
     }
@@ -97,25 +116,64 @@ const authenticateUser = async (req: any, res: any, next: any) => {
     return res.status(401).json({ error: "Unauthorized: No token provided" });
   }
   const idToken = authHeader.split("Bearer ")[1];
+  const apiKey = process.env.VITE_FIREBASE_API_KEY;
+
   try {
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
-    if (!decodedToken.email?.endsWith("@svjbrands.com")) {
+    // Keyless verification using Google's Identity Toolkit REST API
+    // This avoids the need for a Service Account Key (FIREBASE_SERVICE_ACCOUNT_KEY)
+    const response = await axios.post(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${apiKey}`,
+      { idToken }
+    );
+
+    const userData = response.data.users?.[0];
+    if (!userData) {
+      throw new Error("Invalid token");
+    }
+
+    if (!userData.email?.endsWith("@svjbrands.com")) {
       return res.status(403).json({ error: "Forbidden: Access restricted to @svjbrands.com accounts" });
     }
-    req.user = decodedToken;
+
+    // Map REST response to a format similar to decodedToken
+    req.user = {
+      uid: userData.localId,
+      email: userData.email,
+      email_verified: userData.emailVerified,
+      name: userData.displayName,
+    };
     next();
-  } catch (error) {
-    res.status(401).json({ error: "Unauthorized: Invalid token" });
+  } catch (error: any) {
+    console.error("[Auth] Token verification failed:", error.response?.data || error.message);
+    res.status(401).json({ error: "Unauthorized: Invalid or expired token" });
   }
 };
 
 app.get("/api/health", async (req, res) => {
-  const token = await getHubSpotToken();
+  console.log("[API] Health check requested");
+  try {
+    const token = await getHubSpotToken();
+    res.json({ 
+      status: "ok", 
+      time: new Date().toISOString(),
+      tokenConfigured: !!token,
+      tokenPrefix: token ? token.substring(0, 7) : null
+    });
+  } catch (err: any) {
+    console.error("[API] Health check failed:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/test", (req, res) => {
+  console.log("[API] Test endpoint requested");
   res.json({ 
-    status: "ok", 
-    time: new Date().toISOString(),
-    tokenConfigured: !!token,
-    tokenPrefix: token ? token.substring(0, 7) : null
+    message: "API is reachable", 
+    env: {
+      hasHubspotToken: !!process.env.HUBSPOT_ACCESS_TOKEN,
+      hasFirebaseKey: !!process.env.FIREBASE_SERVICE_ACCOUNT_KEY,
+      nodeEnv: process.env.NODE_ENV
+    }
   });
 });
 
