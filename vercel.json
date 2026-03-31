@@ -1,11 +1,11 @@
 {
   "rewrites": [
     {
-      "source": "/api/:path*",
+      "source": "/api/(.*)",
       "destination": "/api"
     },
     {
-      "source": "/((?!api|assets|favicon.ico|logo.png|.*\\..*).*)",
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]

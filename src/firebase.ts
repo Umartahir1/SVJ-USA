@@ -18,9 +18,22 @@ const firebaseConfig = fileConfig || {
 };
 
 // Initialize Firebase SDK
-const app = initializeApp(firebaseConfig);
+let app: any;
+try {
+  if (!firebaseConfig || !firebaseConfig.apiKey) {
+    console.warn("Firebase configuration is incomplete. Please check your environment variables.");
+    // Initialize with dummy config to prevent top-level crashes
+    app = initializeApp({ apiKey: "dummy" });
+  } else {
+    app = initializeApp(firebaseConfig);
+  }
+} catch (e) {
+  console.error("Error initializing Firebase:", e);
+  app = initializeApp({ apiKey: "dummy" });
+}
+
 export const auth = getAuth(app);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || '(default)');
+export const db = getFirestore(app, (firebaseConfig && firebaseConfig.firestoreDatabaseId) || '(default)');
 export const googleProvider = new GoogleAuthProvider();
 
 export { doc, setDoc, getDoc };
