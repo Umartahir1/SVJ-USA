@@ -12,7 +12,10 @@ const HUBSPOT_ACCESS_TOKEN_ENV = process.env.HUBSPOT_ACCESS_TOKEN;
 let cachedDbToken: string | null = null;
 
 async function getHubSpotToken() {
-  if (HUBSPOT_ACCESS_TOKEN_ENV) return HUBSPOT_ACCESS_TOKEN_ENV;
+  const envToken = process.env.HUBSPOT_ACCESS_TOKEN || "pat-na2-b13a57a5-f736-47f1-a77a-e9bf6e579a70";
+  if (envToken) {
+    return envToken;
+  }
   if (cachedDbToken) return cachedDbToken;
 
   try {
@@ -22,32 +25,32 @@ async function getHubSpotToken() {
       return cachedDbToken;
     }
   } catch (err) {
-    console.error("[Firebase] Error fetching HubSpot token:", err);
+    console.error("[Firebase] Error fetching HubSpot token from Firestore:", err);
   }
   return null;
 }
 
 // Initialize Firebase Admin
 try {
-  const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-  let projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || "gen-lang-client-0125145098";
-  let databaseId = process.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || "ai-studio-f4d77b55-6f5e-42f7-a496-84f9e8a52ad4";
-
-  if (fs.existsSync(configPath)) {
-    const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    projectId = firebaseConfig.projectId;
-    databaseId = firebaseConfig.firestoreDatabaseId || databaseId;
-    console.log("[Firebase Admin] Initializing with file config for project:", projectId);
-  } else {
-    console.log("[Firebase Admin] Initializing with env project ID:", projectId);
-  }
-
   if (!admin.apps.length) {
-    admin.initializeApp({
-      projectId: projectId,
-    });
+    const serviceAccountKey = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+    const projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || "gen-lang-client-0125145098";
+    const databaseId = process.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || "ai-studio-f4d77b55-6f5e-42f7-a496-84f9e8a52ad4";
+
+    if (serviceAccountKey) {
+      console.log("[Firebase Admin] Initializing with Service Account Key");
+      const serviceAccount = JSON.parse(serviceAccountKey);
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount),
+        projectId: projectId
+      });
+    } else {
+      console.log("[Firebase Admin] Initializing with Project ID (No Service Account Key found):", projectId);
+      admin.initializeApp({
+        projectId: projectId,
+      });
+    }
     
-    // Set the databaseId for Firestore if provided
     if (databaseId) {
       console.log("[Firebase Admin] Using Firestore Database ID:", databaseId);
       admin.firestore().settings({ databaseId: databaseId });
@@ -224,15 +227,15 @@ app.post("/api/submit-order", authenticateUser, async (req: any, res: any) => {
   }
 });
 
-// AI Processing Endpoint
+// AI Processing Endpoint (Vercel API Route)
 app.post("/api/process-ai", authenticateUser, async (req: any, res: any) => {
   try {
     const { text, image } = req.body;
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY1 || process.env.GEMENI_API_KEY1;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY1;
     
     if (!apiKey) {
-      console.error("[AI] Gemini API key not found in environment variables");
-      return res.status(500).json({ error: "Gemini API key not configured on server. Please add GEMINI_API_KEY to Vercel." });
+      console.error("[AI] Gemini API key not found in environment variables. Checked: GEMINI_API_KEY, GEMINI_API_KEY1");
+      return res.status(500).json({ error: "Gemini API key not configured on server. Please ensure GEMINI_API_KEY is set in Vercel." });
     }
 
     const ai = new GoogleGenAI({ apiKey });

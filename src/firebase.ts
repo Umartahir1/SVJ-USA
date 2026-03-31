@@ -9,24 +9,31 @@ const fileConfig = configs['../firebase-applet-config.json'] as any;
 const useFileConfig = fileConfig && fileConfig.apiKey;
 
 const firebaseConfig = useFileConfig ? fileConfig : {
-  apiKey: (import.meta.env.VITE_FIREBASE_API_KEY || "").trim(),
-  authDomain: (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "").trim(),
-  projectId: (import.meta.env.VITE_FIREBASE_PROJECT_ID || "").trim(),
-  storageBucket: (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "").trim(),
-  messagingSenderId: (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "").trim(),
-  appId: (import.meta.env.VITE_FIREBASE_APP_ID || "").trim(),
-  firestoreDatabaseId: (import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || "").trim()
+  apiKey: (import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyCSnpCFRbMSFa3zy9yCt2eLEQFUoD0j_Wg").trim(),
+  authDomain: (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "gen-lang-client-0125145098.firebaseapp.com").trim(),
+  projectId: (import.meta.env.VITE_FIREBASE_PROJECT_ID || "gen-lang-client-0125145098").trim(),
+  storageBucket: (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "gen-lang-client-0125145098.firebasestorage.app").trim(),
+  messagingSenderId: (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "1063973815235").trim(),
+  appId: (import.meta.env.VITE_FIREBASE_APP_ID || "1:1063973815235:web:ba7a4c35fa8a5dc1c3f376").trim(),
+  firestoreDatabaseId: (import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || "ai-studio-f4d77b55-6f5e-42f7-a496-84f9e8a52ad4").trim()
 };
 
-// Initialize Firebase SDK
+// Initialize Firebase SDK (with hardcoded fallbacks for Vercel)
 let app: any;
 const missingKeys = [];
 if (!firebaseConfig.apiKey) missingKeys.push('VITE_FIREBASE_API_KEY');
 if (!firebaseConfig.projectId) missingKeys.push('VITE_FIREBASE_PROJECT_ID');
+if (!firebaseConfig.authDomain) missingKeys.push('VITE_FIREBASE_AUTH_DOMAIN');
 
-// Debug: Log all VITE_ environment variables (keys only)
-const viteKeys = Object.keys(import.meta.env).filter(k => k.startsWith('VITE_'));
-console.log("[DEBUG] Available VITE_ keys:", viteKeys);
+// Debug: Log all VITE_ environment variables (keys and value lengths)
+const viteEnv = import.meta.env;
+const debugInfo = Object.keys(viteEnv)
+  .filter(k => k.startsWith('VITE_'))
+  .reduce((acc, key) => {
+    acc[key] = { length: String(viteEnv[key]).length, exists: !!viteEnv[key] };
+    return acc;
+  }, {} as any);
+console.log("[DEBUG] VITE_ Environment Status:", debugInfo);
 
 const databaseId = (firebaseConfig && firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId.trim()) || 'ai-studio-f4d77b55-6f5e-42f7-a496-84f9e8a52ad4';
 
