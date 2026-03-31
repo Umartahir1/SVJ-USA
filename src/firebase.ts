@@ -9,13 +9,13 @@ const fileConfig = configs['../firebase-applet-config.json'] as any;
 const useFileConfig = fileConfig && fileConfig.apiKey;
 
 const firebaseConfig = useFileConfig ? fileConfig : {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  firestoreDatabaseId: import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID
+  apiKey: (import.meta.env.VITE_FIREBASE_API_KEY || "").trim(),
+  authDomain: (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "").trim(),
+  projectId: (import.meta.env.VITE_FIREBASE_PROJECT_ID || "").trim(),
+  storageBucket: (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "").trim(),
+  messagingSenderId: (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "").trim(),
+  appId: (import.meta.env.VITE_FIREBASE_APP_ID || "").trim(),
+  firestoreDatabaseId: (import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || "").trim()
 };
 
 // Initialize Firebase SDK
@@ -23,22 +23,15 @@ let app: any;
 const missingKeys = [];
 if (!firebaseConfig.apiKey) missingKeys.push('VITE_FIREBASE_API_KEY');
 if (!firebaseConfig.projectId) missingKeys.push('VITE_FIREBASE_PROJECT_ID');
-if (!firebaseConfig.authDomain) missingKeys.push('VITE_FIREBASE_AUTH_DOMAIN');
-if (!firebaseConfig.appId) missingKeys.push('VITE_FIREBASE_APP_ID');
 
 try {
   if (missingKeys.length > 0) {
     console.warn(`Firebase configuration is incomplete. Missing: ${missingKeys.join(', ')}`);
-    console.log("Current Config Keys found:", Object.keys(firebaseConfig).filter(k => !!(firebaseConfig as any)[k]));
-    
-    app = initializeApp({ 
-      apiKey: firebaseConfig.apiKey || "missing", 
-      projectId: firebaseConfig.projectId || "missing",
-      authDomain: firebaseConfig.authDomain || "missing",
-      appId: firebaseConfig.appId || "missing"
-    });
+    app = initializeApp({ apiKey: "missing", projectId: "missing" });
   } else {
-    console.log("Firebase initialized successfully with " + (useFileConfig ? "file config" : "environment variables"));
+    // Log the first 5 chars of the API key to verify it's being picked up correctly (safe for debugging)
+    const keySnippet = firebaseConfig.apiKey.substring(0, 5) + "...";
+    console.log(`Initializing Firebase with key starting with: ${keySnippet} (${useFileConfig ? "file" : "env"})`);
     app = initializeApp(firebaseConfig);
   }
 } catch (e) {
