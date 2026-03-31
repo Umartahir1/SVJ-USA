@@ -30,22 +30,27 @@ async function getHubSpotToken() {
 // Initialize Firebase Admin
 try {
   const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+  let projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || "gen-lang-client-0125145098";
+  let databaseId = process.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || "ai-studio-f4d77b55-6f5e-42f7-a496-84f9e8a52ad4";
+
   if (fs.existsSync(configPath)) {
     const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    if (!admin.apps.length) {
-      console.log("[Firebase Admin] Initializing with file config for project:", firebaseConfig.projectId);
-      admin.initializeApp({
-        projectId: firebaseConfig.projectId,
-      });
-    }
+    projectId = firebaseConfig.projectId;
+    databaseId = firebaseConfig.firestoreDatabaseId || databaseId;
+    console.log("[Firebase Admin] Initializing with file config for project:", projectId);
   } else {
-    // Fallback if file not found (e.g. on Vercel if not uploaded)
-    if (!admin.apps.length) {
-      const projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID || "gen-lang-client-0125145098";
-      console.log("[Firebase Admin] Initializing with env project ID:", projectId);
-      admin.initializeApp({
-        projectId: projectId,
-      });
+    console.log("[Firebase Admin] Initializing with env project ID:", projectId);
+  }
+
+  if (!admin.apps.length) {
+    admin.initializeApp({
+      projectId: projectId,
+    });
+    
+    // Set the databaseId for Firestore if provided
+    if (databaseId) {
+      console.log("[Firebase Admin] Using Firestore Database ID:", databaseId);
+      admin.firestore().settings({ databaseId: databaseId });
     }
   }
 } catch (err) {

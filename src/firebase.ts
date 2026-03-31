@@ -28,6 +28,8 @@ if (!firebaseConfig.projectId) missingKeys.push('VITE_FIREBASE_PROJECT_ID');
 const viteKeys = Object.keys(import.meta.env).filter(k => k.startsWith('VITE_'));
 console.log("[DEBUG] Available VITE_ keys:", viteKeys);
 
+const databaseId = (firebaseConfig && firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId.trim()) || 'ai-studio-f4d77b55-6f5e-42f7-a496-84f9e8a52ad4';
+
 try {
   if (missingKeys.length > 0) {
     console.warn(`Firebase configuration is incomplete. Missing: ${missingKeys.join(', ')}`);
@@ -37,6 +39,7 @@ try {
     // Log the first 5 chars of the API key to verify it's being picked up correctly (safe for debugging)
     const keySnippet = firebaseConfig.apiKey.substring(0, 5) + "...";
     console.log(`Initializing Firebase with key starting with: ${keySnippet} (${useFileConfig ? "file" : "env"})`);
+    console.log("[DEBUG] Using Firestore Database ID:", databaseId);
     app = initializeApp(firebaseConfig);
   }
 } catch (e) {
@@ -45,7 +48,7 @@ try {
 }
 
 export const auth = getAuth(app);
-export const db = getFirestore(app, (firebaseConfig && firebaseConfig.firestoreDatabaseId) || '(default)');
+export const db = getFirestore(app, databaseId);
 export const googleProvider = new GoogleAuthProvider();
 
 export { doc, setDoc, getDoc };
