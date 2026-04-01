@@ -79,7 +79,9 @@ export default function App() {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tokenStatus, setTokenStatus] = useState<{configured: boolean, prefix: string | null} | null>(null);
+  const [geminiStatus, setGeminiStatus] = useState<{key1: string, key2: string, activeKey: string} | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [testingGemini, setTestingGemini] = useState(false);
   const [aiInput, setAiInput] = useState("");
   const [aiFile, setAiFile] = useState<File | null>(null);
   const [aiPreview, setAiPreview] = useState<string | null>(null);
@@ -134,6 +136,9 @@ export default function App() {
       .then(res => res.json())
       .then(data => {
         setTokenStatus({configured: data.tokenConfigured, prefix: data.tokenPrefix});
+        if (data.diagnostics && data.diagnostics.gemini) {
+          setGeminiStatus(data.diagnostics.gemini);
+        }
       })
       .catch(err => console.error("Health check failed:", err));
     
@@ -178,6 +183,28 @@ export default function App() {
     }
   };
 
+  const testGeminiConnection = async () => {
+    if (!user) return;
+    setTestingGemini(true);
+    try {
+      const idToken = await user.getIdToken();
+      const response = await fetch("/api/test-gemini", {
+        headers: { "Authorization": `Bearer ${idToken}` }
+      });
+      const result = await response.json();
+      if (result.success) {
+        alert(`Success! Gemini says: "${result.message}"\n\nDiagnostics:\nSource: ${result.diagnostics.source}\nPrefix: ${result.diagnostics.prefix}...\nSuffix: ...${result.diagnostics.suffix}\nLength: ${result.diagnostics.length}`);
+      } else {
+        const d = result.diagnostics;
+        alert(`Failed: ${result.error}\n\nDiagnostics:\nSource: ${d.source}\nPrefix: ${d.prefix}...\nSuffix: ...${d.suffix}\nLength: ${d.length}`);
+      }
+    } catch (err: any) {
+      alert(`Error testing connection: ${err.message}`);
+    } finally {
+      setTestingGemini(false);
+    }
+  };
+
   const processWithAi = async () => {
     if (!aiInput && !aiFile) return;
     
@@ -208,7 +235,12 @@ export default function App() {
       });
 
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "AI processing failed");
+      if (!response.ok) {
+        const error = new Error(result.error || "AI processing failed") as any;
+        error.details = result.details;
+        error.diagnostics = result.diagnostics;
+        throw error;
+      }
       
       console.log("AI Result:", result);
 
@@ -253,7 +285,24 @@ export default function App() {
       setShowAiChat(false);
     } catch (err: any) {
       console.error("AI Processing error:", err);
-      setError("AI failed to process the request: " + err.message);
+      
+      let errorMessage = "AI failed to process the request: " + err.message;
+      
+      // If we have diagnostics from the backend, show them
+      try {
+        const d = err.diagnostics;
+        if (d) {
+          errorMessage += `\n\n[Diagnostics] Source: ${d.keySource}, Prefix: ${d.keyPrefix}..., Suffix: ...${d.keySuffix}, Length: ${d.keyLength}`;
+          
+          if (d.keyPrefix && d.keyPrefix.startsWith("AIzaSyB")) {
+            errorMessage += "\n\nNote: You appear to be using a Firebase Browser Key for Gemini. Please ensure the 'Generative Language API' is enabled for this key in Google Cloud Console, or use your 'Default Gemini API Key' instead.";
+          }
+        }
+      } catch (e) {
+        // Fallback to original message if parsing fails
+      }
+      
+      setError(errorMessage);
     } finally {
       setAiLoading(false);
     }
@@ -373,7 +422,10 @@ export default function App() {
       });
 
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Submission failed");
+      if (!response.ok) {
+        const errorMsg = result.details ? `${result.error}: ${result.details}` : (result.error || "Submission failed");
+        throw new Error(errorMsg);
+      }
 
       setSubmitted(true);
     } catch (err: any) {
@@ -563,6 +615,11 @@ export default function App() {
                 Connected to HubSpot (Token: {tokenStatus.prefix}...)
               </p>
             )}
+            {geminiStatus && (
+              <p className="mt-1 text-[10px] text-muted/40 italic">
+                Gemini: {geminiStatus.activeKey}
+              </p>
+            )}
           </div>
           <button 
             type="button"
@@ -629,7 +686,17 @@ export default function App() {
                     </div>
                   )}
 
-                  <div className="flex-1" />
+                  <div className="flex-1 flex items-center gap-4">
+                    <button
+                      type="button"
+                      onClick={testGeminiConnection}
+                      disabled={testingGemini || aiLoading}
+                      className="text-[10px] uppercase tracking-widest font-bold text-muted/40 hover:text-primary transition-colors flex items-center gap-1"
+                    >
+                      {testingGemini ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      Test Connection
+                    </button>
+                  </div>
 
                   <button 
                     type="button"

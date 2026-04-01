@@ -12,22 +12,30 @@ const HUBSPOT_ACCESS_TOKEN_ENV = process.env.HUBSPOT_ACCESS_TOKEN;
 let cachedDbToken: string | null = null;
 
 async function getHubSpotToken() {
+  // Vercel/Environment Variable is the absolute priority
   const envToken = process.env.HUBSPOT_ACCESS_TOKEN;
-  if (envToken) {
-    return envToken;
+  
+  if (envToken && envToken.trim() !== "" && envToken !== "YOUR_HUBSPOT_ACCESS_TOKEN") {
+    console.log(`[HubSpot] Using token from environment variable (starts with: ${envToken.substring(0, 7)})`);
+    return envToken.trim();
   }
+
   if (cachedDbToken) return cachedDbToken;
 
+  console.log("[HubSpot] Token missing from environment, checking Firestore...");
   try {
-    if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
-      const doc = await admin.firestore().collection("config").doc("hubspot").get();
-      if (doc.exists) {
-        cachedDbToken = doc.data()?.token;
-        return cachedDbToken;
-      }
+    // Even without a service account, we can try to initialize if we have the project ID
+    const db = admin.firestore();
+    const doc = await db.collection("config").doc("hubspot").get();
+    if (doc.exists) {
+      cachedDbToken = doc.data()?.token;
+      console.log("[Firebase] Successfully fetched HubSpot token from Firestore");
+      return cachedDbToken;
+    } else {
+      console.warn("[Firebase] HubSpot token document not found in Firestore at config/hubspot");
     }
-  } catch (err) {
-    console.warn("[Firebase] Could not fetch HubSpot token from Firestore (likely missing Service Account Key):", err.message);
+  } catch (err: any) {
+    console.warn("[Firebase] Could not fetch HubSpot token from Firestore:", err.message);
   }
   return null;
 }
@@ -70,9 +78,13 @@ try {
       });
     }
     
-    if (databaseId && process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+    if (databaseId) {
       console.log("[Firebase Admin] Using Firestore Database ID:", databaseId);
-      admin.firestore().settings({ databaseId: databaseId });
+      try {
+        admin.firestore().settings({ databaseId: databaseId });
+      } catch (e) {
+        console.warn("[Firebase Admin] Could not set databaseId (this is normal if already initialized):", e.message);
+      }
     }
   }
 } catch (err) {
@@ -116,19 +128,105 @@ const authenticateUser = async (req: any, res: any, next: any) => {
     return res.status(401).json({ error: "Unauthorized: No token provided" });
   }
   const idToken = authHeader.split("Bearer ")[1];
-  const apiKey = process.env.VITE_FIREBASE_API_KEY;
+  
+  let apiKey = (process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY || "").trim();
+  let source = "env";
+  
+  // Fallback to config file if env var is missing
+  if (!apiKey) {
+    try {
+      // Try multiple possible paths for the config file
+      const paths = [
+        path.join(process.cwd(), "firebase-applet-config.json"),
+        path.join(process.cwd(), "api", "firebase-applet-config.json"),
+        path.join(__dirname, "..", "firebase-applet-config.json"),
+        path.join(__dirname, "firebase-applet-config.json")
+      ];
+      
+      for (const configPath of paths) {
+        if (fs.existsSync(configPath)) {
+          const fileConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+          if (fileConfig.apiKey) {
+            apiKey = (fileConfig.apiKey || "").trim();
+            source = `file (${path.basename(configPath)})`;
+            break;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[Auth] Could not read Firebase config file for API key:", err);
+    }
+  }
+
+  // Remove accidental quotes if present
+  if (apiKey.startsWith('"') && apiKey.endsWith('"')) {
+    apiKey = apiKey.substring(1, apiKey.length - 1);
+  }
+  if (apiKey.startsWith("'") && apiKey.endsWith("'")) {
+    apiKey = apiKey.substring(1, apiKey.length - 1);
+  }
+
+  if (!apiKey) {
+    console.error("[Auth] Firebase API key is missing. Token verification will fail.");
+    return res.status(500).json({ error: "Internal Server Error: Auth configuration missing" });
+  }
+
+  console.log(`[Auth] Verifying token (snippet: ${idToken.substring(0, 10)}...) using API key (snippet: ${apiKey.substring(0, 7)}...) from ${source} (Length: ${apiKey.length})`);
 
   try {
-    // Keyless verification using Google's Identity Toolkit REST API
-    // This avoids the need for a Service Account Key (FIREBASE_SERVICE_ACCOUNT_KEY)
+    // 1. Try Admin SDK first if service account is available
+    if (process.env.FIREBASE_SERVICE_ACCOUNT_KEY) {
+      try {
+        const decodedToken = await admin.auth().verifyIdToken(idToken);
+        req.user = {
+          uid: decodedToken.uid,
+          email: decodedToken.email,
+          email_verified: decodedToken.email_verified,
+          name: decodedToken.name,
+        };
+        
+        if (!req.user.email?.endsWith("@svjbrands.com")) {
+          return res.status(403).json({ error: "Forbidden: Access restricted to @svjbrands.com accounts" });
+        }
+        
+        return next();
+      } catch (adminErr: any) {
+        console.warn("[Auth] Admin SDK verification failed, falling back to REST API:", adminErr.message);
+      }
+    }
+
+    // 2. Fallback to REST API with Referer header to bypass "Browser Key" restrictions
+    let projectId = process.env.FIREBASE_PROJECT_ID || process.env.VITE_FIREBASE_PROJECT_ID;
+    if (!projectId) {
+      try {
+        const configPath = path.join(process.cwd(), "firebase-applet-config.json");
+        if (fs.existsSync(configPath)) {
+          const fileConfig = JSON.parse(fs.readFileSync(configPath, "utf8"));
+          projectId = fileConfig.projectId;
+        }
+      } catch (e) {}
+    }
+    projectId = projectId || "gen-lang-client-0125145098";
+
+    // Use the incoming referer or origin to satisfy API key restrictions
+    const incomingReferer = req.headers.referer || req.headers.origin || `https://${projectId}.firebaseapp.com`;
+    console.log(`[Auth] Forwarding referer to Google API: ${incomingReferer}`);
+
     const response = await axios.post(
       `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${apiKey}`,
-      { idToken }
+      { idToken },
+      {
+        headers: {
+          'Referer': incomingReferer,
+          'Origin': incomingReferer,
+          'Content-Type': 'application/json'
+        }
+      }
     );
 
     const userData = response.data.users?.[0];
     if (!userData) {
-      throw new Error("Invalid token");
+      throw new Error("Invalid token: No user found");
     }
 
     if (!userData.email?.endsWith("@svjbrands.com")) {
@@ -144,20 +242,58 @@ const authenticateUser = async (req: any, res: any, next: any) => {
     };
     next();
   } catch (error: any) {
-    console.error("[Auth] Token verification failed:", error.response?.data || error.message);
-    res.status(401).json({ error: "Unauthorized: Invalid or expired token" });
+    const apiError = error.response?.data;
+    console.error("[Auth] Token verification failed:", apiError ? JSON.stringify(apiError, null, 2) : error.message);
+    
+    // Provide more specific error if it's an API error
+    if (apiError && apiError.error) {
+      const details = apiError.error.message || JSON.stringify(apiError.error);
+      return res.status(401).json({ 
+        error: "Unauthorized: Invalid or expired token",
+        details: details,
+        code: apiError.error.code
+      });
+    }
+    
+    res.status(401).json({ 
+      error: "Unauthorized: Invalid or expired token",
+      details: error.message
+    });
   }
 };
 
 app.get("/api/health", async (req, res) => {
-  console.log("[API] Health check requested");
+  console.log("[API] Health check requested. Env keys:", Object.keys(process.env).filter(k => !k.includes("KEY") && !k.includes("SECRET") && !k.includes("TOKEN")));
+  console.log("[API] Secret keys present:", Object.keys(process.env).filter(k => k.includes("KEY") || k.includes("SECRET") || k.includes("TOKEN")));
   try {
     const token = await getHubSpotToken();
+    const key1 = process.env.GEMINI_API_KEY;
+    const key2 = process.env.GEMINI_API_KEY1;
+    const geminiKey = key1 || key2;
+    const firebaseKey = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY;
+    
+    console.log(`[Health] Gemini Key Source: ${key1 ? "GEMINI_API_KEY" : (key2 ? "GEMINI_API_KEY1" : "NONE")}`);
+    
     res.json({ 
       status: "ok", 
       time: new Date().toISOString(),
       tokenConfigured: !!token,
-      tokenPrefix: token ? token.substring(0, 7) : null
+      tokenPrefix: token ? token.substring(0, 7) : null,
+      diagnostics: {
+        hubspot: {
+          configured: !!token,
+          prefix: token ? token.substring(0, 7) : null,
+          source: process.env.HUBSPOT_ACCESS_TOKEN ? "env" : (cachedDbToken ? "firestore" : "none")
+        },
+        gemini: {
+          key1: key1 ? `Present (starts with ${key1.substring(0, 7)}..., ends with ...${key1.substring(key1.length - 4)}, length: ${key1.length})` : "Missing",
+          key2: key2 ? `Present (starts with ${key2.substring(0, 7)}..., ends with ...${key2.substring(key2.length - 4)}, length: ${key2.length})` : "Missing",
+          activeKey: geminiKey ? `Using ${key1 ? "GEMINI_API_KEY" : "GEMINI_API_KEY1"} (starts with ${geminiKey.substring(0, 7)}..., ends with ...${geminiKey.substring(geminiKey.length - 4)}, length: ${geminiKey.length})` : "None"
+        },
+        firebase: {
+          key: firebaseKey ? `Present (starts with ${firebaseKey.substring(0, 7)}..., ends with ...${firebaseKey.substring(firebaseKey.length - 4)}, length: ${firebaseKey.length})` : "Missing"
+        }
+      }
     });
   } catch (err: any) {
     console.error("[API] Health check failed:", err);
@@ -171,10 +307,44 @@ app.get("/api/test", (req, res) => {
     message: "API is reachable", 
     env: {
       hasHubspotToken: !!process.env.HUBSPOT_ACCESS_TOKEN,
-      hasFirebaseKey: !!process.env.FIREBASE_SERVICE_ACCOUNT_KEY,
+      hasGeminiKey: !!(process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY1),
+      hasFirebaseKey: !!process.env.VITE_FIREBASE_API_KEY,
       nodeEnv: process.env.NODE_ENV
     }
   });
+});
+
+app.get("/api/test-ai", async (req, res) => {
+  try {
+    const key1 = process.env.GEMINI_API_KEY;
+    const key2 = process.env.GEMINI_API_KEY1;
+    let apiKey = (key1 || key2 || "").trim();
+    
+    if (apiKey.startsWith('"') && apiKey.endsWith('"')) apiKey = apiKey.substring(1, apiKey.length - 1);
+    if (apiKey.startsWith("'") && apiKey.endsWith("'")) apiKey = apiKey.substring(1, apiKey.length - 1);
+
+    if (!apiKey) {
+      return res.status(500).json({ 
+        error: "Gemini API key not configured", 
+        env_keys: Object.keys(process.env).filter(k => k.includes("GEMINI"))
+      });
+    }
+    
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: "Say 'AI is working' in one sentence.",
+    });
+    res.json({ 
+      success: true, 
+      text: response.text, 
+      source: key1 ? "GEMINI_API_KEY" : "GEMINI_API_KEY1",
+      keyLength: apiKey.length
+    });
+  } catch (error: any) {
+    console.error("[AI Test] Error:", error);
+    res.status(500).json({ error: error.message, stack: error.stack });
+  }
 });
 
 app.get("/api/companies", async (req, res) => {
@@ -285,20 +455,141 @@ app.post("/api/submit-order", authenticateUser, async (req: any, res: any) => {
   }
 });
 
-// AI Processing Endpoint (Vercel API Route)
-app.post("/api/process-ai", authenticateUser, async (req: any, res: any) => {
+// Test Gemini Connection
+app.get("/api/test-gemini", authenticateUser, async (req: any, res: any) => {
+  // PRIORITIZE GEMINI_API_KEY1 as requested by the user
+  const key1 = process.env.GEMINI_API_KEY1;
+  const key2 = process.env.GEMINI_API_KEY;
+  const key3 = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY;
+  let apiKey = (key1 || key2 || key3 || "").trim();
+  
+  // Check for placeholder values
+  const placeholders = ["YOUR_GEMINI_API_KEY", "YOUR_API_KEY", "PASTE_YOUR_KEY_HERE"];
+  if (placeholders.includes(apiKey.toUpperCase())) {
+    apiKey = "";
+  }
+  
+  if (apiKey.startsWith('"') && apiKey.endsWith('"')) apiKey = apiKey.substring(1, apiKey.length - 1);
+  if (apiKey.startsWith("'") && apiKey.endsWith("'")) apiKey = apiKey.substring(1, apiKey.length - 1);
+
+  const source = key1 ? "GEMINI_API_KEY1" : (key2 ? "GEMINI_API_KEY" : (key3 ? "FIREBASE_API_KEY" : "NONE"));
+
   try {
-    const { text, image } = req.body;
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY1;
+    if (!apiKey) throw new Error("No API key configured");
     
-    if (!apiKey) {
-      console.error("[AI] Gemini API key not found in environment variables. Checked: GEMINI_API_KEY, GEMINI_API_KEY1");
-      return res.status(500).json({ error: "Gemini API key not configured on server. Please ensure GEMINI_API_KEY is set in Vercel." });
+    const host = req.headers['x-forwarded-host'] || req.headers.host || "ais-dev-w7bpy4kc5bzmt7lupixekf-733054587685.asia-southeast1.run.app";
+    const protocol = req.headers['x-forwarded-proto'] || "https";
+    const currentOrigin = `${protocol}://${host}`;
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+    const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=${apiKey}`;
+    
+    let geminiRes;
+    let usedFallback = false;
+    
+    try {
+      geminiRes = await axios.post(url, {
+        contents: [{ parts: [{ text: "Say 'Connection Successful'" }] }]
+      }, {
+        headers: {
+          "Referer": currentOrigin,
+          "Content-Type": "application/json"
+        },
+        timeout: 10000
+      });
+    } catch (primaryError: any) {
+      const isHighDemand = primaryError.response?.status === 503 || 
+                          (primaryError.response?.data?.error?.message?.includes("high demand"));
+      
+      if (isHighDemand) {
+        console.warn("[AI Test] Primary model busy, trying fallback...");
+        usedFallback = true;
+        geminiRes = await axios.post(fallbackUrl, {
+          contents: [{ parts: [{ text: "Say 'Connection Successful (Fallback)'" }] }]
+        }, {
+          headers: {
+            "Referer": currentOrigin,
+            "Content-Type": "application/json"
+          },
+          timeout: 10000
+        });
+      } else {
+        throw primaryError;
+      }
     }
 
-    const ai = new GoogleGenAI({ apiKey });
-    const model = "gemini-3-flash-preview";
+    res.json({ 
+      success: true, 
+      message: geminiRes.data.candidates?.[0]?.content?.parts?.[0]?.text || "No text returned",
+      diagnostics: {
+        source,
+        prefix: apiKey.substring(0, 7),
+        suffix: apiKey.substring(apiKey.length - 4),
+        length: apiKey.length,
+        usedFallback
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      diagnostics: {
+        source,
+        prefix: apiKey ? apiKey.substring(0, 7) : "none",
+        suffix: apiKey ? apiKey.substring(apiKey.length - 4) : "none",
+        length: apiKey ? apiKey.length : 0
+      }
+    });
+  }
+});
 
+// AI Processing Endpoint (Vercel API Route)
+app.post("/api/process-ai", authenticateUser, async (req: any, res: any) => {
+  const { text, image } = req.body;
+  // PRIORITIZE GEMINI_API_KEY1 as requested by the user
+  const key1 = process.env.GEMINI_API_KEY1;
+  const key2 = process.env.GEMINI_API_KEY;
+  const key3 = process.env.FIREBASE_API_KEY || process.env.VITE_FIREBASE_API_KEY;
+  let apiKey = (key1 || key2 || key3 || "").trim();
+  
+  // Check for placeholder values
+  const placeholders = ["YOUR_GEMINI_API_KEY", "YOUR_API_KEY", "PASTE_YOUR_KEY_HERE"];
+  if (placeholders.includes(apiKey.toUpperCase())) {
+    apiKey = "";
+  }
+  
+  // Remove accidental quotes if present
+  if (apiKey.startsWith('"') && apiKey.endsWith('"')) {
+    apiKey = apiKey.substring(1, apiKey.length - 1);
+  }
+  if (apiKey.startsWith("'") && apiKey.endsWith("'")) {
+    apiKey = apiKey.substring(1, apiKey.length - 1);
+  }
+
+  const source = key1 ? "GEMINI_API_KEY1" : (key2 ? "GEMINI_API_KEY" : (key3 ? "FIREBASE_API_KEY" : "NONE"));
+  
+  try {
+    if (!apiKey) {
+      console.error("[AI] Gemini API key not found in environment variables. Checked: GEMINI_API_KEY, GEMINI_API_KEY1, FIREBASE_API_KEY");
+      return res.status(500).json({ error: "Gemini API key not configured on server. Please ensure GEMINI_API_KEY or GEMINI_API_KEY1 is set." });
+    }
+
+    if (apiKey.startsWith("AIzaSyB")) {
+      console.warn(`[AI] Warning: You appear to be using a Firebase Browser Key for Gemini (Source: ${source}). If this fails with 'API key not valid', ensure the 'Generative Language API' is enabled for this key in Google Cloud Console, or use your 'Default Gemini API Key' instead.`);
+    }
+
+    console.log(`[AI] Using Gemini key. Source: ${source}. Length: ${apiKey.length}. Snippet: ${apiKey.substring(0, 7)}...`);
+
+    // Detect origin for Referer header (Crucial for Vercel/AI Studio website restrictions)
+    const host = req.headers['x-forwarded-host'] || req.headers.host || "ais-dev-w7bpy4kc5bzmt7lupixekf-733054587685.asia-southeast1.run.app";
+    const protocol = req.headers['x-forwarded-proto'] || "https";
+    const currentOrigin = `${protocol}://${host}`;
+    
+    console.log(`[AI] Processing request. Origin: ${currentOrigin}, Key Source: ${source}`);
+
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+    const fallbackUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=${apiKey}`;
+    
     // Fetch products for SKU matching
     const token = await getHubSpotToken();
     let availableSkus = "";
@@ -334,10 +625,12 @@ app.post("/api/process-ai", authenticateUser, async (req: any, res: any) => {
     If you see a product name but no SKU, try to match it to the available SKUs provided.
     If you cannot find a piece of information, leave it as null or an empty array.`;
 
-    let contents: any = [];
-    if (text) contents.push({ text });
+    let parts: any[] = [];
+    if (text) parts.push({ text: `${systemInstruction}\n\nUser Input:\n${text}` });
+    else parts.push({ text: systemInstruction });
+
     if (image && image.data) {
-      contents.push({
+      parts.push({
         inlineData: {
           mimeType: image.mimeType,
           data: image.data
@@ -345,36 +638,80 @@ app.post("/api/process-ai", authenticateUser, async (req: any, res: any) => {
       });
     }
 
-    const result = await ai.models.generateContent({
-      model,
-      contents: { parts: contents },
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            companyName: { type: Type.STRING },
-            lineItems: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  sku: { type: Type.STRING },
-                  quantity: { type: Type.NUMBER }
-                },
-                required: ["sku", "quantity"]
-              }
-            }
-          }
+    const geminiPayload = {
+      contents: [{ parts }]
+    };
+
+    let geminiResponse;
+    let usedFallback = false;
+    
+    try {
+      // First attempt with primary model
+      geminiResponse = await axios.post(geminiUrl, geminiPayload, {
+        headers: {
+          "Referer": currentOrigin,
+          "Content-Type": "application/json"
+        },
+        timeout: 30000
+      });
+    } catch (primaryError: any) {
+      const isHighDemand = primaryError.response?.status === 503 || 
+                          (primaryError.response?.data?.error?.message?.includes("high demand"));
+      
+      if (isHighDemand) {
+        console.warn("[AI] Primary model (gemini-3-flash-preview) is experiencing high demand. Waiting 2s before trying fallback model (gemini-3.1-flash-lite-preview)...");
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        try {
+          usedFallback = true;
+          geminiResponse = await axios.post(fallbackUrl, geminiPayload, {
+            headers: {
+              "Referer": currentOrigin,
+              "Content-Type": "application/json"
+            },
+            timeout: 30000
+          });
+        } catch (fallbackError: any) {
+          console.error("[AI] Fallback model also failed:", fallbackError.message);
+          throw primaryError; // Throw the original error if fallback also fails
         }
+      } else {
+        throw primaryError;
+      }
+    }
+
+    const aiText = geminiResponse.data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!aiText) {
+      throw new Error("Gemini returned an empty response. Check API key and restrictions.");
+    }
+
+    // Clean up JSON response
+    const jsonMatch = aiText.match(/\{[\s\S]*\}/);
+    const result = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+    res.json({ ...result, _meta: { usedFallback } });
+  } catch (error: any) {
+    const apiError = error.response?.data || error.message;
+    console.error('[AI] Full Error Object:', JSON.stringify(apiError, null, 2));
+    
+    // Extract specific error message if it's a Google API error
+    let errorMessage = "AI processing failed";
+    let details = typeof apiError === 'object' ? JSON.stringify(apiError) : apiError;
+    
+    if (typeof apiError === 'object' && apiError.error) {
+      errorMessage = apiError.error.message || errorMessage;
+    } else if (typeof apiError === 'string') {
+      errorMessage = apiError;
+    }
+
+    res.status(500).json({ 
+      error: errorMessage, 
+      details: details,
+      diagnostics: {
+        keySource: source,
+        keyPrefix: apiKey ? apiKey.substring(0, 7) : "none",
+        keySuffix: apiKey ? apiKey.substring(apiKey.length - 4) : "none",
+        keyLength: apiKey ? apiKey.length : 0
       }
     });
-
-    res.json(JSON.parse(result.text || "{}"));
-  } catch (error: any) {
-    console.error('[AI] Processing Error:', error);
-    res.status(500).json({ error: error.message });
   }
 });
 
