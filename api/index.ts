@@ -418,7 +418,7 @@ app.post("/api/submit-order", authenticateUser, async (req: any, res: any) => {
   try {
     const owners = await getHubSpotOwners();
     const owner = owners.find((o: any) => o.email?.toLowerCase() === userEmail?.toLowerCase());
-    const hubspotOwnerId = owner ? owner.id : "161583536";
+    const hubspotOwnerId = owner ? owner.id : "162266949";
     const companySearchResponse = await axios.post("https://api.hubapi.com/crm/v3/objects/companies/search", {
       filterGroups: [{ filters: [{ propertyName: "name", operator: "EQ", value: formData.companyName }] }],
       properties: ["name"],
