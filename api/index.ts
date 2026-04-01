@@ -495,7 +495,7 @@ app.get("/api/test-gemini", authenticateUser, async (req: any, res: any) => {
           "Referer": currentOrigin,
           "Content-Type": "application/json"
         },
-        timeout: 10000
+        timeout: 30000
       });
     } catch (primaryError: any) {
       const isHighDemand = primaryError.response?.status === 503 || 
@@ -511,7 +511,7 @@ app.get("/api/test-gemini", authenticateUser, async (req: any, res: any) => {
             "Referer": currentOrigin,
             "Content-Type": "application/json"
           },
-          timeout: 10000
+          timeout: 30000
         });
       } else {
         throw primaryError;
@@ -652,7 +652,7 @@ app.post("/api/process-ai", authenticateUser, async (req: any, res: any) => {
           "Referer": currentOrigin,
           "Content-Type": "application/json"
         },
-        timeout: 30000
+        timeout: 60000
       });
     } catch (primaryError: any) {
       const isHighDemand = primaryError.response?.status === 503 || 
@@ -668,7 +668,7 @@ app.post("/api/process-ai", authenticateUser, async (req: any, res: any) => {
               "Referer": currentOrigin,
               "Content-Type": "application/json"
             },
-            timeout: 30000
+            timeout: 60000
           });
         } catch (fallbackError: any) {
           console.error("[AI] Fallback model also failed:", fallbackError.message);
