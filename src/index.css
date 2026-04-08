@@ -74,6 +74,7 @@ label {
 input,
 select,
 textarea {
+  appearance: none;
   background: linear-gradient(180deg, #171719 0%, #121214 100%);
   color: #f5f3ef;
   border: 1px solid #323236;

@@ -351,7 +351,11 @@ app.get("/api/companies", async (req, res) => {
   const token = await getHubSpotToken();
   if (!token) return res.status(500).json({ error: "HubSpot Token not configured" });
   try {
-    const properties = ["name", "address", "city", "state", "zip", "phone", "ein_number", "billing_address", "shipping_address"];
+    const properties = [
+      "name", "address", "city", "state", "zip", "phone", "ein_number", 
+      "billing_address", "shipping_address", "domain", "sales_tax_id",
+      "store_category", "number_of_stores", "lifecyclestage", "type"
+    ];
     let allResults: any[] = [];
     let after = undefined;
     let hasMore = true;
@@ -368,6 +372,137 @@ app.get("/api/companies", async (req, res) => {
       .sort((a: any, b: any) => (a.properties?.name || "").localeCompare(b.properties?.name || ""));
     res.json({ results: filteredCompanies });
   } catch (error: any) {
+    res.status(error.response?.status || 500).json({ error: error.response?.data?.message || error.message });
+  }
+});
+
+app.get("/api/contacts/:companyId", async (req, res) => {
+  const token = await getHubSpotToken();
+  if (!token) return res.status(500).json({ error: "HubSpot Token not configured" });
+  const { companyId } = req.params;
+  try {
+    // 1. Get associated contact IDs
+    const assocUrl = `https://api.hubapi.com/crm/v4/objects/companies/${companyId}/associations/contacts`;
+    const assocRes = await axios.get(assocUrl, { headers: { Authorization: `Bearer ${token}` } });
+    const contactIds = assocRes.data.results.map((r: any) => r.toObjectId);
+
+    if (contactIds.length === 0) return res.json({ results: [] });
+
+    // 2. Fetch contact details
+    const contactsUrl = `https://api.hubapi.com/crm/v3/objects/contacts/batch/read`;
+    const contactsRes = await axios.post(contactsUrl, {
+      inputs: contactIds.map((id: string) => ({ id })),
+      properties: ["firstname", "lastname", "email", "phone", "jobtitle", "address", "city", "state", "zip"]
+    }, { headers: { Authorization: `Bearer ${token}` } });
+
+    res.json({ results: contactsRes.data.results });
+  } catch (error: any) {
+    res.status(error.response?.status || 500).json({ error: error.response?.data?.message || error.message });
+  }
+});
+
+app.get("/api/hubspot-properties/:objectType", async (req, res) => {
+  const token = await getHubSpotToken();
+  if (!token) return res.status(500).json({ error: "HubSpot Token not configured" });
+  const { objectType } = req.params;
+  try {
+    const url = `https://api.hubapi.com/crm/v3/properties/${objectType}`;
+    const response = await axios.get(url, { headers: { Authorization: `Bearer ${token}` } });
+    res.json({ results: response.data.results });
+  } catch (error: any) {
+    res.status(error.response?.status || 500).json({ error: error.response?.data?.message || error.message });
+  }
+});
+
+app.post("/api/create-company", authenticateUser, async (req: any, res: any) => {
+  const token = await getHubSpotToken();
+  if (!token) return res.status(500).json({ error: "HubSpot Token not configured" });
+  const { properties } = req.body;
+  const userEmail = req.user.email;
+
+  try {
+    const owners = await getHubSpotOwners();
+    const owner = owners.find((o: any) => o.email?.toLowerCase() === userEmail?.toLowerCase());
+    const hubspotOwnerId = owner ? owner.id : "162266949";
+
+    const response = await axios.post("https://api.hubapi.com/crm/v3/objects/companies", {
+      properties: {
+        ...properties,
+        hubspot_owner_id: hubspotOwnerId
+      }
+    }, { headers: { Authorization: `Bearer ${token}` } });
+
+    res.json(response.data);
+  } catch (error: any) {
+    res.status(error.response?.status || 500).json({ error: error.response?.data?.message || error.message });
+  }
+});
+
+app.post("/api/create-contact", authenticateUser, async (req: any, res: any) => {
+  const token = await getHubSpotToken();
+  if (!token) return res.status(500).json({ error: "HubSpot Token not configured" });
+  const { properties, companyId } = req.body;
+  const userEmail = req.user.email;
+
+  try {
+    const owners = await getHubSpotOwners();
+    const owner = owners.find((o: any) => o.email?.toLowerCase() === userEmail?.toLowerCase());
+    const hubspotOwnerId = owner ? owner.id : "162266949";
+
+    let contactId: string;
+    let contactData: any;
+
+    try {
+      // 1. Try to create contact
+      const contactRes = await axios.post("https://api.hubapi.com/crm/v3/objects/contacts", {
+        properties: {
+          ...properties,
+          hubspot_owner_id: hubspotOwnerId
+        }
+      }, { headers: { Authorization: `Bearer ${token}` } });
+      
+      contactId = contactRes.data.id;
+      contactData = contactRes.data;
+    } catch (createError: any) {
+      // Handle "Contact already exists" error
+      if (createError.response?.status === 409 || (createError.response?.data?.message?.includes("already exists"))) {
+        const message = createError.response?.data?.message || "";
+        const match = message.match(/ID: (\d+)/);
+        if (match && match[1]) {
+          contactId = match[1];
+          // Fetch existing contact data to return it
+          const existingRes = await axios.get(`https://api.hubapi.com/crm/v3/objects/contacts/${contactId}`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          contactData = existingRes.data;
+        } else {
+          throw createError;
+        }
+      } else {
+        throw createError;
+      }
+    }
+
+    // 2. Associate with company
+    if (companyId && contactId) {
+      try {
+        // Use associationTypeId 279 for Contact to Company (Primary)
+        // Fallback to 1 (Standard) if needed, but 279 is standard for primary
+        await axios.put(`https://api.hubapi.com/crm/v4/objects/contacts/${contactId}/associations/companies/${companyId}`, [
+          { associationCategory: "HUBSPOT_DEFINED", associationTypeId: 279 }
+        ], { headers: { Authorization: `Bearer ${token}` } });
+      } catch (assocError: any) {
+        console.error("Association error (Primary 279), trying standard (1):", assocError.response?.data || assocError.message);
+        // Fallback to standard association if primary fails
+        await axios.put(`https://api.hubapi.com/crm/v4/objects/contacts/${contactId}/associations/companies/${companyId}`, [
+          { associationCategory: "HUBSPOT_DEFINED", associationTypeId: 1 }
+        ], { headers: { Authorization: `Bearer ${token}` } });
+      }
+    }
+
+    res.json(contactData);
+  } catch (error: any) {
+    console.error("Create contact error details:", error.response?.data || error.message);
     res.status(error.response?.status || 500).json({ error: error.response?.data?.message || error.message });
   }
 });
@@ -428,11 +563,13 @@ app.post("/api/submit-order", authenticateUser, async (req: any, res: any) => {
       return res.status(404).json({ error: `Company "${formData.companyName}" not found.` });
     }
     const companyId = companyData.results[0].id;
+    const contactId = formData.contactId;
+
     let totalAmount = 0;
     lineItems.forEach((item: any) => { totalAmount += (item.price || 0) * (item.quantity || 0); });
     const dealResponse = await axios.post("https://api.hubapi.com/crm/v3/objects/deals", {
       properties: {
-        dealname: `${formData.companyName} Reorder`,
+        dealname: `${formData.companyName}`,
         amount: totalAmount.toFixed(2),
         closedate: new Date().toISOString(),
         pipeline: "1231313610",
@@ -440,7 +577,10 @@ app.post("/api/submit-order", authenticateUser, async (req: any, res: any) => {
         hubspot_owner_id: hubspotOwnerId,
         dealtype: "existingbusiness",
       },
-      associations: [{ to: { id: companyId }, types: [{ associationCategory: "HUBSPOT_DEFINED", associationTypeId: 5 }] }],
+      associations: [
+        { to: { id: companyId }, types: [{ associationCategory: "HUBSPOT_DEFINED", associationTypeId: 5 }] },
+        ...(contactId ? [{ to: { id: contactId }, types: [{ associationCategory: "HUBSPOT_DEFINED", associationTypeId: 3 }] }] : [])
+      ],
     }, { headers: { Authorization: `Bearer ${token}` } });
     const dealId = dealResponse.data.id;
     for (const item of lineItems) {
@@ -449,6 +589,38 @@ app.post("/api/submit-order", authenticateUser, async (req: any, res: any) => {
         associations: [{ to: { id: dealId }, types: [{ associationCategory: "HUBSPOT_DEFINED", associationTypeId: 20 }] }],
       }, { headers: { Authorization: `Bearer ${token}` } });
     }
+
+    // 3. Sync to n8n Webhook (Fire and forget to avoid delaying the response)
+    axios.post("https://svjbrands.app.n8n.cloud/webhook/d121d919-f388-4b89-877c-3ba543e94e52", {
+      dealId,
+      totalAmount: totalAmount.toFixed(2),
+      orderDate: new Date().toISOString(),
+      customer: {
+        companyName: formData.companyName,
+        companyId: companyId,
+        contactId: formData.contactId,
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        email: formData.email,
+        phone: formData.phone,
+        shippingAddress: formData.shippingAddress,
+        billingAddress: formData.billingAddress,
+        poNumber: formData.poNumber,
+        orderNotes: formData.orderNotes
+      },
+      items: lineItems.map((item: any) => ({
+        productId: item.productId,
+        name: item.name,
+        sku: item.sku,
+        price: item.price,
+        quantity: item.quantity,
+        total: (item.price * item.quantity).toFixed(2)
+      })),
+      submittedBy: userEmail
+    }).catch((webhookError: any) => {
+      console.error("n8n Webhook sync failed:", webhookError.message);
+    });
+
     res.json({ success: true, dealId });
   } catch (error: any) {
     res.status(error.response?.status || 500).json({ error: error.response?.data?.message || error.message });

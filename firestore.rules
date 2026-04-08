@@ -26,6 +26,11 @@ service cloud.firestore {
     }
 
     // Match HubSpot Config
+    match /orders/{orderId} {
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow read: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
     match /config/hubspot {
       // Only authenticated users can read the token to make HubSpot calls
       allow read: if isAuthenticated();

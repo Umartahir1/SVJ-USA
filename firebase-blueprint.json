@@ -12,12 +12,33 @@
         "lastLogin": { "type": "string", "format": "date-time", "description": "The last time the user logged in." }
       },
       "required": ["uid", "email"]
+    },
+    "order": {
+      "title": "Order",
+      "description": "Stores order details submitted through the app.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "companyId": { "type": "string" },
+        "contactId": { "type": "string" },
+        "formData": { "type": "object" },
+        "lineItems": { "type": "array" },
+        "totalAmount": { "type": "number" },
+        "hubspotDealId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "companyId", "formData", "lineItems", "createdAt"]
     }
   },
   "firestore": {
     "/users/{uid}": {
       "schema": "user_profile",
       "description": "User profile documents indexed by their Firebase Auth UID."
+    },
+    "/orders/{orderId}": {
+      "schema": "order",
+      "description": "Order documents."
     },
     "/config/hubspot": {
       "schema": "object",
