@@ -140,7 +140,13 @@ export default function App() {
     contactId: "",
     companyEin: "",
     shippingAddress: "",
+    shippingCity: "",
+    shippingState: "",
+    shippingZip: "",
     billingAddress: "",
+    billingCity: "",
+    billingState: "",
+    billingZip: "",
     paymentTerms: "Net 30",
   });
 
@@ -428,14 +434,19 @@ export default function App() {
       const selectedCompany = companies.find(c => c.properties.name === value);
       if (selectedCompany) {
         const props = selectedCompany.properties;
-        const formattedAddress = [props.address, props.city, props.state, props.zip].filter(Boolean).join(", ");
         setFormData(prev => ({
           ...prev,
           companyId: selectedCompany.id,
           phone: props.phone || prev.phone,
           companyEin: props.ein_number || prev.companyEin,
-          shippingAddress: props.shipping_address || formattedAddress || prev.shippingAddress,
-          billingAddress: props.billing_address || formattedAddress || prev.billingAddress,
+          shippingAddress: props.shipping_address || props.address || prev.shippingAddress,
+          shippingCity: props.city || prev.shippingCity,
+          shippingState: props.state || prev.shippingState,
+          shippingZip: props.zip || prev.shippingZip,
+          billingAddress: props.billing_address || props.address || prev.billingAddress,
+          billingCity: props.city || prev.billingCity,
+          billingState: props.state || prev.billingState,
+          billingZip: props.zip || prev.billingZip,
         }));
         fetchContacts(selectedCompany.id);
       } else {
@@ -449,15 +460,20 @@ export default function App() {
       const selectedContact = contacts.find(c => c.id === value);
       if (selectedContact) {
         const props = selectedContact.properties;
-        const formattedAddress = [props.address, props.city, props.state, props.zip].filter(Boolean).join(", ");
         setFormData(prev => ({
           ...prev,
           firstName: props.firstname || prev.firstName,
           lastName: props.lastname || prev.lastName,
           email: props.email || prev.email,
           phone: props.phone || prev.phone,
-          shippingAddress: formattedAddress || prev.shippingAddress,
-          billingAddress: formattedAddress || prev.billingAddress,
+          shippingAddress: props.address || prev.shippingAddress,
+          shippingCity: props.city || prev.shippingCity,
+          shippingState: props.state || prev.shippingState,
+          shippingZip: props.zip || prev.shippingZip,
+          billingAddress: props.address || prev.billingAddress,
+          billingCity: props.city || prev.billingCity,
+          billingState: props.state || prev.billingState,
+          billingZip: props.zip || prev.billingZip,
         }));
       }
     }
@@ -510,8 +526,6 @@ export default function App() {
       if (!response.ok) throw new Error(data.error || "Failed to create company");
       
       const props = data.properties;
-      const formattedAddress = [props.address, props.city, props.state, props.zip].filter(Boolean).join(", ");
-      
       // 1. Optimistically update the companies list so it appears in dropdown immediately
       setCompanies(prev => [data, ...prev]);
       
@@ -520,8 +534,14 @@ export default function App() {
         ...prev,
         companyName: props.name,
         companyId: data.id,
-        shippingAddress: props.shipping_address || formattedAddress || prev.shippingAddress,
-        billingAddress: props.billing_address || formattedAddress || prev.billingAddress,
+        shippingAddress: props.shipping_address || props.address || prev.shippingAddress,
+        shippingCity: props.city || prev.shippingCity,
+        shippingState: props.state || prev.shippingState,
+        shippingZip: props.zip || prev.shippingZip,
+        billingAddress: props.billing_address || props.address || prev.billingAddress,
+        billingCity: props.city || prev.billingCity,
+        billingState: props.state || prev.billingState,
+        billingZip: props.zip || prev.billingZip,
       }));
       
       // 3. Close modal immediately
@@ -556,8 +576,6 @@ export default function App() {
       if (!response.ok) throw new Error(data.error || "Failed to create contact");
       
       const props = data.properties;
-      const formattedAddress = [props.address, props.city, props.state, props.zip].filter(Boolean).join(", ");
-
       // 1. Optimistically update the contacts list
       setContacts(prev => [data, ...prev]);
 
@@ -569,8 +587,14 @@ export default function App() {
         lastName: props.lastname,
         email: props.email,
         phone: props.phone || prev.phone,
-        shippingAddress: formattedAddress || prev.shippingAddress,
-        billingAddress: formattedAddress || prev.billingAddress,
+        shippingAddress: props.address || prev.shippingAddress,
+        shippingCity: props.city || prev.shippingCity,
+        shippingState: props.state || prev.shippingState,
+        shippingZip: props.zip || prev.shippingZip,
+        billingAddress: props.address || prev.billingAddress,
+        billingCity: props.city || prev.billingCity,
+        billingState: props.state || prev.billingState,
+        billingZip: props.zip || prev.billingZip,
       }));
 
       // 3. Close modal immediately
@@ -1086,27 +1110,104 @@ export default function App() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="md:col-span-2">
                 <label htmlFor="shippingAddress">Shipping Address</label>
-                <textarea
+                <input
                   id="shippingAddress"
                   name="shippingAddress"
+                  type="text"
                   required
                   value={formData.shippingAddress}
                   onChange={handleInputChange}
-                  placeholder="Full shipping address..."
-                  rows={3}
+                  placeholder="Street Address"
                 />
               </div>
+              <div>
+                <label htmlFor="shippingCity">Shipping City</label>
+                <input
+                  id="shippingCity"
+                  name="shippingCity"
+                  type="text"
+                  required
+                  value={formData.shippingCity}
+                  onChange={handleInputChange}
+                  placeholder="City"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="shippingState">State</label>
+                  <input
+                    id="shippingState"
+                    name="shippingState"
+                    type="text"
+                    required
+                    value={formData.shippingState}
+                    onChange={handleInputChange}
+                    placeholder="State"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="shippingZip">Zip</label>
+                  <input
+                    id="shippingZip"
+                    name="shippingZip"
+                    type="text"
+                    required
+                    value={formData.shippingZip}
+                    onChange={handleInputChange}
+                    placeholder="Zip"
+                  />
+                </div>
+              </div>
+
               <div className="md:col-span-2">
                 <label htmlFor="billingAddress">Billing Address</label>
-                <textarea
+                <input
                   id="billingAddress"
                   name="billingAddress"
+                  type="text"
                   required
                   value={formData.billingAddress}
                   onChange={handleInputChange}
-                  placeholder="Full billing address..."
-                  rows={3}
+                  placeholder="Street Address"
                 />
+              </div>
+              <div>
+                <label htmlFor="billingCity">Billing City</label>
+                <input
+                  id="billingCity"
+                  name="billingCity"
+                  type="text"
+                  required
+                  value={formData.billingCity}
+                  onChange={handleInputChange}
+                  placeholder="City"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="billingState">State</label>
+                  <input
+                    id="billingState"
+                    name="billingState"
+                    type="text"
+                    required
+                    value={formData.billingState}
+                    onChange={handleInputChange}
+                    placeholder="State"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="billingZip">Zip</label>
+                  <input
+                    id="billingZip"
+                    name="billingZip"
+                    type="text"
+                    required
+                    value={formData.billingZip}
+                    onChange={handleInputChange}
+                    placeholder="Zip"
+                  />
+                </div>
               </div>
               <div>
                 <label htmlFor="paymentTerms">Payment Terms</label>
@@ -1361,18 +1462,7 @@ function AddCompanyForm({ properties, onSubmit, onCancel, isCreating }: { proper
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Clean up domain if it's an email or has protocol
-    let cleanDomain = data.domain.trim().toLowerCase();
-    if (cleanDomain.includes('@')) {
-      cleanDomain = cleanDomain.split('@')[1];
-    }
-    // Remove http:// or https:// if present
-    cleanDomain = cleanDomain.replace(/^(https?:\/\/)/, '');
-    // Remove trailing slashes or paths
-    cleanDomain = cleanDomain.split('/')[0];
-    
-    onSubmit({ ...data, domain: cleanDomain });
+    onSubmit(data);
   };
 
   const renderSelect = (name: string, label: string) => {
@@ -1409,7 +1499,7 @@ function AddCompanyForm({ properties, onSubmit, onCancel, isCreating }: { proper
         </div>
         <div>
           <label>Domain Name</label>
-          <input type="text" placeholder="example.com" value={data.domain} onChange={e => setData(prev => ({ ...prev, domain: e.target.value }))} />
+          <input type="text" value={data.domain} onChange={e => setData(prev => ({ ...prev, domain: e.target.value }))} />
         </div>
         <div>
           <label>Sales Tax ID</label>

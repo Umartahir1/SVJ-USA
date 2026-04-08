@@ -606,8 +606,18 @@ app.post("/api/submit-order", authenticateUser, async (req: any, res: any) => {
           lastName: formData.lastName,
           email: formData.email,
           phone: formData.phone,
-          shippingAddress: formData.shippingAddress,
-          billingAddress: formData.billingAddress,
+          shipping: {
+            address: formData.shippingAddress,
+            city: formData.shippingCity,
+            state: formData.shippingState,
+            zip: formData.shippingZip
+          },
+          billing: {
+            address: formData.billingAddress,
+            city: formData.billingCity,
+            state: formData.billingState,
+            zip: formData.billingZip
+          },
           poNumber: formData.poNumber,
           orderNotes: formData.orderNotes
         },
