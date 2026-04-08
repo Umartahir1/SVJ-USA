@@ -583,43 +583,47 @@ app.post("/api/submit-order", authenticateUser, async (req: any, res: any) => {
       ],
     }, { headers: { Authorization: `Bearer ${token}` } });
     const dealId = dealResponse.data.id;
-    for (const item of lineItems) {
-      await axios.post("https://api.hubapi.com/crm/v3/objects/line_items", {
+    
+    // 2. Create Line Items in parallel for better performance
+    await Promise.all(lineItems.map((item: any) => 
+      axios.post("https://api.hubapi.com/crm/v3/objects/line_items", {
         properties: { quantity: item.quantity.toString(), hs_product_id: item.productId },
         associations: [{ to: { id: dealId }, types: [{ associationCategory: "HUBSPOT_DEFINED", associationTypeId: 20 }] }],
-      }, { headers: { Authorization: `Bearer ${token}` } });
-    }
+      }, { headers: { Authorization: `Bearer ${token}` } })
+    ));
 
-    // 3. Sync to n8n Webhook (Fire and forget to avoid delaying the response)
-    axios.post("https://svjbrands.app.n8n.cloud/webhook/d121d919-f388-4b89-877c-3ba543e94e52", {
-      dealId,
-      totalAmount: totalAmount.toFixed(2),
-      orderDate: new Date().toISOString(),
-      customer: {
-        companyName: formData.companyName,
-        companyId: companyId,
-        contactId: formData.contactId,
-        firstName: formData.firstName,
-        lastName: formData.lastName,
-        email: formData.email,
-        phone: formData.phone,
-        shippingAddress: formData.shippingAddress,
-        billingAddress: formData.billingAddress,
-        poNumber: formData.poNumber,
-        orderNotes: formData.orderNotes
-      },
-      items: lineItems.map((item: any) => ({
-        productId: item.productId,
-        name: item.name,
-        sku: item.sku,
-        price: item.price,
-        quantity: item.quantity,
-        total: (item.price * item.quantity).toFixed(2)
-      })),
-      submittedBy: userEmail
-    }).catch((webhookError: any) => {
+    // 3. Sync to n8n Webhook (Awaited for reliability in serverless environments like Vercel)
+    try {
+      await axios.post("https://svjbrands.app.n8n.cloud/webhook/d121d919-f388-4b89-877c-3ba543e94e52", {
+        dealId,
+        totalAmount: totalAmount.toFixed(2),
+        orderDate: new Date().toISOString(),
+        customer: {
+          companyName: formData.companyName,
+          companyId: companyId,
+          contactId: formData.contactId,
+          firstName: formData.firstName,
+          lastName: formData.lastName,
+          email: formData.email,
+          phone: formData.phone,
+          shippingAddress: formData.shippingAddress,
+          billingAddress: formData.billingAddress,
+          poNumber: formData.poNumber,
+          orderNotes: formData.orderNotes
+        },
+        items: lineItems.map((item: any) => ({
+          productId: item.productId,
+          name: item.name,
+          sku: item.sku,
+          price: item.price,
+          quantity: item.quantity,
+          total: (item.price * item.quantity).toFixed(2)
+        })),
+        submittedBy: userEmail
+      });
+    } catch (webhookError: any) {
       console.error("n8n Webhook sync failed:", webhookError.message);
-    });
+    }
 
     res.json({ success: true, dealId });
   } catch (error: any) {

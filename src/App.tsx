@@ -1361,7 +1361,18 @@ function AddCompanyForm({ properties, onSubmit, onCancel, isCreating }: { proper
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(data);
+    
+    // Clean up domain if it's an email or has protocol
+    let cleanDomain = data.domain.trim().toLowerCase();
+    if (cleanDomain.includes('@')) {
+      cleanDomain = cleanDomain.split('@')[1];
+    }
+    // Remove http:// or https:// if present
+    cleanDomain = cleanDomain.replace(/^(https?:\/\/)/, '');
+    // Remove trailing slashes or paths
+    cleanDomain = cleanDomain.split('/')[0];
+    
+    onSubmit({ ...data, domain: cleanDomain });
   };
 
   const renderSelect = (name: string, label: string) => {
@@ -1398,7 +1409,7 @@ function AddCompanyForm({ properties, onSubmit, onCancel, isCreating }: { proper
         </div>
         <div>
           <label>Domain Name</label>
-          <input type="text" value={data.domain} onChange={e => setData(prev => ({ ...prev, domain: e.target.value }))} />
+          <input type="text" placeholder="example.com" value={data.domain} onChange={e => setData(prev => ({ ...prev, domain: e.target.value }))} />
         </div>
         <div>
           <label>Sales Tax ID</label>
