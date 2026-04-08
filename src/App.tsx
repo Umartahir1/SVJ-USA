@@ -1075,7 +1075,7 @@ export default function App() {
                 />
               </div>
               <div>
-                <label htmlFor="phone">Mobile Phone Number</label>
+                <label htmlFor="phone">Mobile Phone Number (Required)</label>
                 <input
                   id="phone"
                   name="phone"
@@ -1449,6 +1449,7 @@ function AddCompanyForm({ properties, onSubmit, onCancel, isCreating }: { proper
   const [data, setData] = useState({
     name: "",
     domain: "",
+    phone: "",
     sales_tax_id: "",
     address: "",
     city: "",
@@ -1500,6 +1501,10 @@ function AddCompanyForm({ properties, onSubmit, onCancel, isCreating }: { proper
         <div>
           <label>Domain Name</label>
           <input type="text" value={data.domain} onChange={e => setData(prev => ({ ...prev, domain: e.target.value }))} />
+        </div>
+        <div>
+          <label>Phone Number (Required)</label>
+          <input required type="tel" value={data.phone} onChange={e => setData(prev => ({ ...prev, phone: e.target.value }))} />
         </div>
         <div>
           <label>Sales Tax ID</label>
